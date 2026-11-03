@@ -1,0 +1,612 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>User List Query Builder</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: two panes. Left = steps (input, filters, output type). Right = sticky SQL panel. Stacks on phones. */
+:root {
+  --bg: #f5f6f4;
+  --surface: #ffffff;
+  --surface-2: #eef1ee;
+  --fg: #17201b;
+  --muted: #5b675f;
+  --line: #d6ddd7;
+  --accent: #1f6b4f;
+  --accent-soft: #dcefe5;
+  --accent-fg: #ffffff;
+  --warn: #9a5b00;
+  --warn-soft: #fff1d6;
+  --neg: #a33a2c;
+  --neg-soft: #f8e1dc;
+  --code-bg: #14201a;
+  --code-fg: #dfeee5;
+  --code-kw: #8fd3ae;
+  --code-str: #f2c879;
+  --code-cm: #7f9488;
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --radius: 8px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1512; --surface: #161e1a; --surface-2: #1d2722; --fg: #e3ece6; --muted: #98a89e;
+    --line: #2c3a33; --accent: #5cc195; --accent-soft: #1d3a2d; --accent-fg: #0c1410;
+    --warn: #f0b75c; --warn-soft: #3a2c12; --neg: #f08a7a; --neg-soft: #3d1f1a;
+    --code-bg: #0a0f0c; --code-fg: #dfeee5; --code-kw: #8fd3ae; --code-str: #f2c879; --code-cm: #6f8478;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1512; --surface: #161e1a; --surface-2: #1d2722; --fg: #e3ece6; --muted: #98a89e;
+  --line: #2c3a33; --accent: #5cc195; --accent-soft: #1d3a2d; --accent-fg: #0c1410;
+  --warn: #f0b75c; --warn-soft: #3a2c12; --neg: #f08a7a; --neg-soft: #3d1f1a;
+  --code-bg: #0a0f0c; --code-fg: #dfeee5; --code-kw: #8fd3ae; --code-str: #f2c879; --code-cm: #6f8478;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 14px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 48px;
+}
+.wrap { max-width: 1240px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+header.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+.sub { color: var(--muted); margin: 2px 0 0; max-width: 70ch; }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+section.step { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.step-h { display: flex; align-items: baseline; gap: 10px; }
+.step-n { font-family: var(--font-mono); font-size: 12px; color: var(--accent); font-weight: 500; letter-spacing: 0.04em; }
+.step-h h2 { font-size: 15px; margin: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 180px; }
+label.lbl, .lbl { font-size: 12px; color: var(--muted); font-weight: 500; letter-spacing: 0.02em; }
+select, input[type="text"], input[type="date"], textarea {
+  font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 9px; width: 100%; min-width: 0;
+}
+textarea { font-family: var(--font-mono); font-size: 12px; min-height: 70px; resize: vertical; }
+select:focus-visible, input:focus-visible, textarea:focus-visible, button:focus-visible, .chip:focus-within {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+.drop {
+  border: 1.5px dashed var(--line); border-radius: var(--radius); padding: 14px; display: flex; flex-wrap: wrap;
+  align-items: center; gap: 10px 14px; background: var(--surface-2);
+}
+.drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.drop p { margin: 0; color: var(--muted); flex: 1 1 200px; }
+button {
+  font: inherit; font-weight: 500; border-radius: 6px; padding: 7px 12px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg);
+}
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button:hover { filter: brightness(0.97); }
+.file-btn { position: relative; overflow: hidden; }
+.file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.stats { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stats b { color: var(--fg); font-weight: 600; }
+.note { font-size: 12px; color: var(--muted); margin: 0; }
+.badge { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); }
+.preview { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; max-height: 160px; }
+.preview table { border-collapse: collapse; font-family: var(--font-mono); font-size: 12px; width: 100%; }
+.preview th, .preview td { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+.preview th { background: var(--surface-2); position: sticky; top: 0; font-weight: 500; }
+.preview td.sel, .preview th.sel { background: var(--accent-soft); }
+
+/* filter cards */
+.filters { display: flex; flex-direction: column; gap: 10px; }
+.fcard { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.fcard.on { border-color: var(--accent); }
+.fhead { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; user-select: none; }
+.fhead input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); flex: none; }
+.ftitle { font-weight: 600; flex: 1 1 auto; min-width: 0; }
+.ftitle small { display: block; font-weight: 400; color: var(--muted); font-size: 12px; }
+.fbody { padding: 0 12px 12px 38px; display: flex; flex-direction: column; gap: 10px; }
+.fcard:not(.on) .fbody { display: none; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; flex: none; }
+.seg button { border: 0; border-radius: 0; padding: 5px 10px; background: transparent; color: var(--muted); font-size: 13px; }
+.seg button[aria-pressed="true"].yes { background: var(--accent); color: var(--accent-fg); }
+.seg button[aria-pressed="true"].no { background: var(--neg); color: var(--accent-fg); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; font-size: 12.5px; cursor: pointer; background: var(--surface); }
+.chip input { accent-color: var(--accent); margin: 0; }
+.chip:has(input:checked) { background: var(--accent-soft); border-color: var(--accent); }
+.warnline { font-size: 12px; color: var(--warn); background: var(--warn-soft); padding: 6px 9px; border-radius: 6px; margin: 0; }
+.warnline[hidden] { display: none !important; }
+
+/* sql panel */
+.sqlpane { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); }
+@media (max-width: 900px) { .sqlpane { position: static; } }
+.sqlhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.summary { font-size: 13px; color: var(--muted); }
+.summary b { color: var(--fg); }
+pre.sql {
+  margin: 0; background: var(--code-bg); color: var(--code-fg); font-family: var(--font-mono); font-size: 12.5px;
+  line-height: 1.55; padding: 14px; border-radius: var(--radius); overflow: auto; max-height: 70vh; white-space: pre;
+}
+pre.sql .kw { color: var(--code-kw); }
+pre.sql .st { color: var(--code-str); }
+pre.sql .cm { color: var(--code-cm); }
+.toast { font-size: 12px; color: var(--accent); min-height: 1em; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>User List Query Builder</h1>
+      <p class="sub">Upload a CSV of user IDs, pick the filters, and copy a Snowflake query that returns the matching user IDs. Everything runs in your browser; nothing is uploaded.</p>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="col">
+      <!-- 1. Input -->
+      <section class="step" aria-labelledby="s1">
+        <div class="step-h"><span class="step-n">STEP 1</span><h2 id="s1">Input IDs</h2></div>
+        <div class="drop" id="drop">
+          <p>Drop a CSV here. Row 1 must be the header.</p>
+          <label class="file-btn" for="file"><span class="primary" style="display:inline-block;padding:7px 12px;border-radius:6px;background:var(--accent);color:var(--accent-fg);font-weight:500;">Choose CSV</span><input type="file" id="file" accept=".csv,.tsv,.txt,text/csv"></label>
+        </div>
+        <div id="srcline" class="stats"></div>
+        <div class="row">
+          <div class="field">
+            <label class="lbl" for="colSel">Column with the IDs</label>
+            <select id="colSel"></select>
+          </div>
+          <div class="field">
+            <label class="lbl" for="inType">These IDs are</label>
+            <select id="inType"></select>
+          </div>
+        </div>
+        <div class="preview" id="preview"></div>
+        <div class="stats" id="idStats"></div>
+        <details>
+          <summary class="lbl" style="cursor:pointer">Or paste IDs instead of a CSV</summary>
+          <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
+            <textarea id="paste" placeholder="One ID per line, or separated by commas"></textarea>
+            <div><button id="usePaste" type="button">Use pasted IDs</button></div>
+          </div>
+        </details>
+      </section>
+
+      <!-- 2. Filters -->
+      <section class="step" aria-labelledby="s2">
+        <div class="step-h"><span class="step-n">STEP 2</span><h2 id="s2">Filters</h2></div>
+        <p class="note">Turn on a filter, then choose Include (keep only users who match) or Exclude (drop users who match). Filters combine with AND.</p>
+        <div class="filters" id="filters"></div>
+      </section>
+
+      <!-- 3. Output -->
+      <section class="step" aria-labelledby="s3">
+        <div class="step-h"><span class="step-n">STEP 3</span><h2 id="s3">Output</h2></div>
+        <div class="row">
+          <div class="field">
+            <label class="lbl" for="outType">Return this ID</label>
+            <select id="outType"></select>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="col sqlpane">
+      <section class="step" aria-labelledby="sq">
+        <div class="sqlhead">
+          <div class="step-h"><span class="step-n">QUERY</span><h2 id="sq">Snowflake SQL</h2></div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span class="toast" id="toast" aria-live="polite"></span>
+            <button class="primary" id="copy" type="button">Copy query</button>
+          </div>
+        </div>
+        <div class="summary" id="summary"></div>
+        <p class="warnline" id="sizeWarn" hidden></p>
+        <pre class="sql" id="sql" tabindex="0" aria-label="Generated SQL"></pre>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- ID types ----------
+  const TYPES = {
+    uni:  { label: "uni_user_id / pu_user_id", col: "uni_user_id" },
+    uw:   { label: "uw_user_id",               col: "uw_user_id" },
+    hash: { label: "hash_value",               col: "hash_value" },
+    mf:   { label: "mf_user_id",               col: "mf_user_id" }
+  };
+  const T = {
+    uo:   "reports_db.reports.user_orchestrator_user",
+    up:   "reports_db.reports.user_profile_user_details",
+    sps:  "reports_db.reports.subscription_platform_subscriptions",
+    mf:   "reports_db.reports.mutual_fund_portfolio_user",
+    ft:   "reports_db.reports.feature_toggle_feature_values",
+    ban:  "reports_db.reports.mobile_backend_user_feature_access",
+    fact: "reports_db.reports.user_fact_data_uw"
+  };
+  const STATUSES = ["ACTIVE", "AWAITING_ACTIVATION", "EXPIRED", "UPGRADED", "CANCELLED"];
+  const PV = [
+    { id: "lt5",   label: "< 5L",     lo: null,     hi: 500000 },
+    { id: "5_10",  label: "5–10L",    lo: 500000,   hi: 1000000 },
+    { id: "10_25", label: "10–25L",   lo: 1000000,  hi: 2500000 },
+    { id: "25_50", label: "25–50L",   lo: 2500000,  hi: 5000000 },
+    { id: "50_75", label: "50–75L",   lo: 5000000,  hi: 7500000 },
+    { id: "75_1c", label: "75L–1Cr",  lo: 7500000,  hi: 10000000 },
+    { id: "1c",    label: "1Cr+",     lo: 10000000, hi: null }
+  ];
+  const ACTIVE_UO = "right(uo.external_user_id, 9) not in ('-inactive', '-deactive')";
+  const ELITE_PLAN = "planid like '%advisory-elite%' and planid not like '%advisory-elite-prime%' and planid not like '%advisory-elite-1m%'";
+  const PRIME_PLAN = "planid like '%advisory-elite-prime%'";
+
+  // ---------- filter definitions ----------
+  // each: id, title, hint, key (which base column it checks), fields, defaults, sub(state) -> {sql, error}
+  const FILTERS = [
+    { id: "prime_wl", title: "Whitelisted for Prime", hint: "Feature toggle ALLOCATION_PLAN = true", key: "uni_user_id",
+      sub: () => ({ sql: `select entityid::string from ${T.ft}\n    where featurename = 'ALLOCATION_PLAN' and lower(featurevalue::string) = 'true' and entityid is not null` }) },
+    { id: "infinite", title: "Part of Infinite", hint: "mutual_fund_portfolio_user.infinite_onboarded = true", key: "uw_user_id",
+      sub: () => ({ sql: `select external_user_id::string from ${T.mf}\n    where to_varchar(infinite_onboarded) ilike 'true' and external_user_id is not null` }) },
+    { id: "elite", title: "Has an Elite subscription", hint: "Elite plans only, monthly (-1m) plans excluded", key: "uw_user_id",
+      statuses: ["ACTIVE"],
+      sub: (s) => s.statuses.length ? ({ sql: `select userid::string from ${T.sps}\n    where ${ELITE_PLAN}\n      and status in (${s.statuses.map(q).join(", ")}) and userid is not null` }) : ({ error: "Pick at least one status." }) },
+    { id: "non_elite", title: "Non-Elite (never bought Elite)", hint: "No Elite subscription in the statuses below", key: "uw_user_id",
+      statuses: ["ACTIVE", "AWAITING_ACTIVATION", "EXPIRED", "UPGRADED"], invert: true,
+      sub: (s) => s.statuses.length ? ({ sql: `select userid::string from ${T.sps}\n    where ${ELITE_PLAN}\n      and status in (${s.statuses.map(q).join(", ")}) and userid is not null` }) : ({ error: "Pick at least one status." }) },
+    { id: "prime", title: "Has a Prime subscription", hint: "Plans like advisory-elite-prime", key: "uw_user_id",
+      statuses: ["ACTIVE", "AWAITING_ACTIVATION"],
+      sub: (s) => s.statuses.length ? ({ sql: `select userid::string from ${T.sps}\n    where ${PRIME_PLAN}\n      and status in (${s.statuses.map(q).join(", ")}) and userid is not null` }) : ({ error: "Pick at least one status." }) },
+    { id: "pv", title: "Portfolio value range", hint: "Latest fetch in user_fact_data_uw", key: "uni_user_id",
+      buckets: [],
+      sub: (s) => {
+        if (!s.buckets.length) return { error: "Pick at least one range." };
+        const conds = PV.filter(b => s.buckets.includes(b.id)).map(b => {
+          const parts = [];
+          if (b.lo != null) parts.push(`portfolio_value >= ${b.lo}`);
+          if (b.hi != null) parts.push(`portfolio_value < ${b.hi}`);
+          return "(" + parts.join(" and ") + ")";
+        });
+        return { sql: `select uni_user_id::string from (\n        select uni_user_id, portfolio_value from ${T.fact}\n        where uni_user_id is not null\n        qualify row_number() over (partition by uni_user_id order by fetch_date desc) = 1\n    )\n    where ${conds.join("\n       or ")}` };
+      } },
+    { id: "banner", title: "Banner visible", hint: "mobile_backend_user_feature_access by featureid", key: "uni_user_id",
+      featureid: "", access: "GRANTED",
+      sub: (s) => s.featureid.trim() ? ({ sql: `select userid::string from ${T.ban}\n    where featureid = ${q(s.featureid.trim())} and accesstype = ${q(s.access)} and userid is not null` }) : ({ error: "Enter a featureid." }) },
+    { id: "toggle", title: "Feature toggle", hint: "feature_toggle_feature_values by featurename", key: "uni_user_id",
+      fname: "ALLOCATION_PLAN", fcustom: "", fvalue: "true",
+      sub: (s) => {
+        const name = s.fname === "__custom" ? s.fcustom.trim() : s.fname;
+        if (!name) return { error: "Enter a feature name." };
+        return { sql: `select entityid::string from ${T.ft}\n    where featurename = ${q(name)} and lower(featurevalue::string) = ${q(s.fvalue)} and entityid is not null` };
+      } },
+    { id: "fetch", title: "Fetch date filter", hint: "Any fetch in user_fact_data_uw within the dates", key: "uni_user_id",
+      from: "", to: "",
+      sub: (s) => {
+        if (!s.from && !s.to) return { error: "Enter a from date, a to date, or both." };
+        const c = [];
+        if (s.from) c.push(`date(fetch_date) >= ${q(s.from)}`);
+        if (s.to) c.push(`date(fetch_date) <= ${q(s.to)}`);
+        return { sql: `select uni_user_id::string from ${T.fact}\n    where uni_user_id is not null and ${c.join(" and ")}` };
+      } }
+  ];
+
+  // ---------- state ----------
+  const state = {
+    rows: [], headers: [], col: 0, ids: [], raw: 0, blanks: 0, source: "",
+    example: true,
+    inType: "uni", outType: "uni",
+    f: {}
+  };
+  FILTERS.forEach(d => {
+    state.f[d.id] = {
+      on: false, should: true,
+      statuses: d.statuses ? d.statuses.slice() : [],
+      buckets: d.buckets ? d.buckets.slice() : [],
+      featureid: d.featureid || "", access: d.access || "GRANTED",
+      fname: d.fname || "ALLOCATION_PLAN", fcustom: "", fvalue: d.fvalue || "true",
+      from: "", to: ""
+    };
+  });
+  // example working state
+  state.f.prime_wl.on = true;
+  state.f.elite.on = true; state.f.elite.should = false;
+
+  function q(v) { return "'" + String(v).replace(/'/g, "''") + "'"; }
+  function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+  const $ = id => document.getElementById(id);
+
+  // ---------- CSV ----------
+  function parseCSV(text) {
+    text = text.replace(/^﻿/, "");
+    const first = text.split(/\r?\n/, 1)[0] || "";
+    const delim = [",", "\t", ";"].map(d => [d, first.split(d).length]).sort((a, b) => b[1] - a[1])[0][0];
+    const rows = []; let row = [], cur = "", inQ = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (inQ) {
+        if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else inQ = false; }
+        else cur += ch;
+      } else if (ch === '"') inQ = true;
+      else if (ch === delim) { row.push(cur); cur = ""; }
+      else if (ch === "\n" || ch === "\r") {
+        if (ch === "\r" && text[i + 1] === "\n") i++;
+        row.push(cur); rows.push(row); row = []; cur = "";
+      } else cur += ch;
+    }
+    if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
+    return rows.filter(r => r.some(c => c.trim() !== ""));
+  }
+
+  function loadTable(rows, source, example) {
+    if (!rows.length) { flash("That file has no rows."); return; }
+    state.headers = rows[0].map((h, i) => h.trim() || `column ${i + 1}`);
+    state.rows = rows.slice(1);
+    state.source = source; state.example = !!example;
+    // guess the ID column
+    const guess = state.headers.findIndex(h => /(user.?id|hash|uni|uw|mf|pu)/i.test(h));
+    state.col = guess >= 0 ? guess : 0;
+    // guess input type from header
+    const h = state.headers[state.col].toLowerCase();
+    if (/hash/.test(h)) state.inType = "hash";
+    else if (/mf/.test(h)) state.inType = "mf";
+    else if (/uw/.test(h)) state.inType = "uw";
+    else if (/uni|pu/.test(h)) state.inType = "uni";
+    extractIds(); renderInput(); render();
+  }
+
+  function extractIds() {
+    const seen = new Set(); let blanks = 0;
+    state.rows.forEach(r => {
+      const v = (r[state.col] || "").trim().replace(/^'+|'+$/g, "");
+      if (!v) { blanks++; return; }
+      seen.add(v);
+    });
+    state.ids = Array.from(seen); state.raw = state.rows.length; state.blanks = blanks;
+  }
+
+  // ---------- render input ----------
+  function renderInput() {
+    const cs = $("colSel");
+    cs.innerHTML = state.headers.map((h, i) => `<option value="${i}"${i === state.col ? " selected" : ""}>${esc(h)}</option>`).join("");
+    $("inType").value = state.inType;
+    $("srcline").innerHTML = state.example
+      ? `<span class="badge">Example data</span><span>Upload your CSV to replace these sample IDs.</span>`
+      : `<span>Loaded <b>${esc(state.source)}</b></span>`;
+    const head = state.headers.map((h, i) => `<th class="${i === state.col ? "sel" : ""}">${esc(h)}</th>`).join("");
+    const body = state.rows.slice(0, 6).map(r => "<tr>" + state.headers.map((_, i) => `<td class="${i === state.col ? "sel" : ""}">${esc(r[i] || "")}</td>`).join("") + "</tr>").join("");
+    $("preview").innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+    const dupes = state.raw - state.blanks - state.ids.length;
+    $("idStats").innerHTML = `<span><b>${state.raw.toLocaleString()}</b> rows</span><span><b>${state.ids.length.toLocaleString()}</b> unique IDs</span>` +
+      (dupes > 0 ? `<span>${dupes.toLocaleString()} duplicates removed</span>` : "") +
+      (state.blanks > 0 ? `<span>${state.blanks.toLocaleString()} blank cells skipped</span>` : "");
+  }
+
+  // ---------- render filters ----------
+  function renderFilters() {
+    const wrap = $("filters");
+    wrap.innerHTML = FILTERS.map(d => {
+      const s = state.f[d.id];
+      let body = `<div class="row"><div class="seg" role="group" aria-label="Include or exclude">
+          <button type="button" class="yes" data-act="should" data-f="${d.id}" aria-pressed="${s.should}">Include</button>
+          <button type="button" class="no" data-act="shouldnot" data-f="${d.id}" aria-pressed="${!s.should}">Exclude</button>
+        </div></div>`;
+      if (d.statuses) {
+        body += `<div><div class="lbl">Statuses that count</div><div class="chips">` + STATUSES.map(st =>
+          `<label class="chip"><input type="checkbox" data-f="${d.id}" data-status="${st}"${s.statuses.includes(st) ? " checked" : ""}>${st}</label>`).join("") + `</div></div>`;
+      }
+      if (d.id === "pv") {
+        body += `<div><div class="lbl">Ranges (rupees, latest fetch)</div><div class="chips">` + PV.map(b =>
+          `<label class="chip"><input type="checkbox" data-f="pv" data-bucket="${b.id}"${s.buckets.includes(b.id) ? " checked" : ""}>${b.label}</label>`).join("") + `</div></div>`;
+      }
+      if (d.id === "banner") {
+        body += `<div class="row">
+          <div class="field"><label class="lbl" for="ban_fid">featureid</label><input type="text" id="ban_fid" data-f="banner" data-k="featureid" value="${esc(s.featureid)}" placeholder="e.g. PRIME_HOME_BANNER"></div>
+          <div class="field" style="flex:0 1 160px"><label class="lbl" for="ban_acc">accesstype</label><select id="ban_acc" data-f="banner" data-k="access">
+            <option${s.access === "GRANTED" ? " selected" : ""}>GRANTED</option><option${s.access === "REVOKED" ? " selected" : ""}>REVOKED</option></select></div></div>`;
+      }
+      if (d.id === "toggle") {
+        body += `<div class="row">
+          <div class="field"><label class="lbl" for="tg_name">featurename</label><select id="tg_name" data-f="toggle" data-k="fname">
+            <option value="ALLOCATION_PLAN"${s.fname === "ALLOCATION_PLAN" ? " selected" : ""}>ALLOCATION_PLAN</option>
+            <option value="__custom"${s.fname === "__custom" ? " selected" : ""}>Type my own…</option></select></div>
+          <div class="field" style="flex:0 1 120px"><label class="lbl" for="tg_val">featurevalue</label><select id="tg_val" data-f="toggle" data-k="fvalue">
+            <option${s.fvalue === "true" ? " selected" : ""}>true</option><option${s.fvalue === "false" ? " selected" : ""}>false</option></select></div></div>` +
+          (s.fname === "__custom" ? `<div class="field"><label class="lbl" for="tg_custom">Feature name</label><input type="text" id="tg_custom" data-f="toggle" data-k="fcustom" value="${esc(s.fcustom)}" placeholder="FEATURE_NAME"></div>` : "");
+      }
+      if (d.id === "fetch") {
+        body += `<div class="row">
+          <div class="field"><label class="lbl" for="fd_from">From (inclusive)</label><input type="date" id="fd_from" data-f="fetch" data-k="from" value="${esc(s.from)}"></div>
+          <div class="field"><label class="lbl" for="fd_to">To (inclusive)</label><input type="date" id="fd_to" data-f="fetch" data-k="to" value="${esc(s.to)}"></div></div>`;
+      }
+      body += `<p class="warnline" id="w_${d.id}" hidden></p>`;
+      return `<div class="fcard${s.on ? " on" : ""}" id="card_${d.id}">
+        <label class="fhead" for="on_${d.id}"><input type="checkbox" id="on_${d.id}" data-f="${d.id}" data-act="toggle"${s.on ? " checked" : ""}>
+          <span class="ftitle">${esc(d.title)}<small>${esc(d.hint)}</small></span></label>
+        <div class="fbody">${body}</div></div>`;
+    }).join("");
+  }
+
+  // ---------- SQL ----------
+  function baseSQL(t) {
+    const i = "i.input_id";
+    if (t === "uni") return `    select distinct
+        ${i}                         as uni_user_id,
+        uo.user_id::string           as uw_user_id,
+        up.hash_value::string        as hash_value,
+        mf.id::string                as mf_user_id
+    from input_ids i
+    left join ${T.uo} uo on uo.external_user_id::string = ${i}
+    left join ${T.up} up on up.userid::string = ${i}
+    left join ${T.mf} mf on mf.external_user_id::string = uo.user_id::string`;
+    if (t === "uw") return `    select distinct
+        uo.external_user_id::string  as uni_user_id,
+        ${i}                         as uw_user_id,
+        up.hash_value::string        as hash_value,
+        mf.id::string                as mf_user_id
+    from input_ids i
+    left join ${T.uo} uo on uo.user_id::string = ${i} and ${ACTIVE_UO}
+    left join ${T.up} up on up.userid::string = uo.external_user_id::string
+    left join ${T.mf} mf on mf.external_user_id::string = ${i}`;
+    if (t === "hash") return `    select distinct
+        up.userid::string            as uni_user_id,
+        uo.user_id::string           as uw_user_id,
+        ${i}                         as hash_value,
+        mf.id::string                as mf_user_id
+    from input_ids i
+    left join ${T.up} up on up.hash_value::string = ${i}
+    left join ${T.uo} uo on uo.external_user_id::string = up.userid::string
+    left join ${T.mf} mf on mf.external_user_id::string = uo.user_id::string`;
+    return `    select distinct
+        uo.external_user_id::string  as uni_user_id,
+        mf.external_user_id::string  as uw_user_id,
+        up.hash_value::string        as hash_value,
+        ${i}                         as mf_user_id
+    from input_ids i
+    left join ${T.mf} mf on mf.id::string = ${i}
+    left join ${T.uo} uo on uo.user_id::string = mf.external_user_id::string and ${ACTIVE_UO}
+    left join ${T.up} up on up.userid::string = uo.external_user_id::string`;
+  }
+
+  function buildSQL() {
+    const out = TYPES[state.outType].col;
+    const conds = []; const notes = []; let active = 0;
+    FILTERS.forEach(d => {
+      const s = state.f[d.id];
+      const w = $("w_" + d.id);
+      if (!s.on) { if (w) w.hidden = true; return; }
+      const r = d.sub(s);
+      if (r.error) { if (w) { w.textContent = r.error + " This filter is left out of the query until then."; w.hidden = false; } notes.push(`${d.title}: skipped (${r.error.replace(/\.$/, "")})`); return; }
+      if (w) w.hidden = true;
+      active++;
+      // non_elite is phrased as "has none", so should => NOT IN
+      const wantIn = d.invert ? !s.should : s.should;
+      const lhs = wantIn ? `b.${d.key} in` : `coalesce(b.${d.key}, '') not in`;
+      conds.push(`  -- ${s.should ? "include" : "exclude"}: ${d.title}\n  and ${lhs} (\n    ${r.sql}\n  )`);
+    });
+
+    const idList = state.ids.map(x => x.replace(/'/g, "''").replace(/,/g, "")).join(",");
+    const header = [
+      `-- User List Query Builder`,
+      `-- input: ${state.ids.length.toLocaleString()} unique ${TYPES[state.inType].label} | output: ${TYPES[state.outType].label}`,
+      `-- filters on: ${active}` + (notes.length ? ` | ${notes.join("; ")}` : "")
+    ].join("\n");
+    const sql = `${header}
+with input_ids as (
+    select distinct trim(value)::string as input_id
+    from table(split_to_table('${idList}', ','))
+    where trim(value) <> ''
+),
+
+base as (
+${baseSQL(state.inType)}
+)
+
+select distinct b.${out}
+from base b
+where b.${out} is not null
+${conds.join("\n")}
+order by 1;`;
+    return { sql, active, notes };
+  }
+
+  function highlight(sql) {
+    return esc(sql).split("\n").map(line => {
+      if (/^\s*--/.test(line)) return `<span class="cm">${line}</span>`;
+      return line
+        .replace(/('(?:[^']|'')*')/g, '<span class="st">$1</span>')
+        .replace(/\b(select|distinct|from|where|and|or|not|in|left|join|on|as|with|order|by|qualify|over|partition|row_number|table|split_to_table|trim|coalesce|lower|date|like|ilike|is|null|to_varchar|value)\b/g, '<span class="kw">$1</span>');
+    }).join("\n");
+  }
+
+  let lastSQL = "";
+  function render() {
+    const { sql, active } = buildSQL();
+    lastSQL = sql;
+    $("sql").innerHTML = highlight(sql);
+    $("summary").innerHTML = `<b>${state.ids.length.toLocaleString()}</b> ${esc(TYPES[state.inType].label)} in · <b>${active}</b> filter${active === 1 ? "" : "s"} on · returns <b>${esc(TYPES[state.outType].label)}</b>` +
+      (state.example ? ` · <span class="badge">Example data</span>` : "");
+    const kb = new Blob([sql]).size / 1024;
+    const w = $("sizeWarn");
+    if (kb > 900) { w.textContent = `The query is ${Math.round(kb).toLocaleString()} KB. Snowflake rejects statements over about 1 MB, so split the CSV into smaller files.`; w.hidden = false; }
+    else w.hidden = true;
+  }
+
+  // ---------- events ----------
+  function flash(msg) { const t = $("toast"); t.textContent = msg; clearTimeout(flash._t); flash._t = setTimeout(() => t.textContent = "", 2500); }
+
+  function readFile(file) {
+    if (!file) return;
+    const r = new FileReader();
+    r.onload = () => loadTable(parseCSV(String(r.result)), file.name, false);
+    r.onerror = () => flash("Couldn't read that file.");
+    r.readAsText(file);
+  }
+  $("file").addEventListener("change", e => { readFile(e.target.files[0]); e.target.value = ""; });
+  const drop = $("drop");
+  ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", e => readFile(e.dataTransfer.files[0]));
+
+  $("usePaste").addEventListener("click", () => {
+    const vals = $("paste").value.split(/[\s,;]+/).map(v => v.trim().replace(/^['"]+|['"]+$/g, "")).filter(Boolean);
+    if (!vals.length) { flash("Paste at least one ID first."); return; }
+    loadTable([["pasted_ids"]].concat(vals.map(v => [v])), "pasted IDs", false);
+  });
+
+  $("colSel").addEventListener("change", e => { state.col = +e.target.value; extractIds(); renderInput(); render(); });
+  $("inType").addEventListener("change", e => { state.inType = e.target.value; render(); });
+  $("outType").addEventListener("change", e => { state.outType = e.target.value; render(); });
+
+  const fwrap = $("filters");
+  fwrap.addEventListener("click", e => {
+    const b = e.target.closest("button[data-act]");
+    if (!b) return;
+    const s = state.f[b.dataset.f];
+    s.should = b.dataset.act === "should";
+    renderFilters(); render();
+  });
+  fwrap.addEventListener("change", e => {
+    const el = e.target; const id = el.dataset.f; if (!id) return;
+    const s = state.f[id];
+    if (el.dataset.act === "toggle") { s.on = el.checked; renderFilters(); render(); return; }
+    if (el.dataset.status) { const st = el.dataset.status; s.statuses = el.checked ? s.statuses.concat(st) : s.statuses.filter(x => x !== st); }
+    else if (el.dataset.bucket) { const bk = el.dataset.bucket; s.buckets = el.checked ? s.buckets.concat(bk) : s.buckets.filter(x => x !== bk); }
+    else if (el.dataset.k) { s[el.dataset.k] = el.value; if (el.dataset.k === "fname") { renderFilters(); } }
+    render();
+  });
+  fwrap.addEventListener("input", e => {
+    const el = e.target; if (el.tagName !== "INPUT" || el.type !== "text" || !el.dataset.k) return;
+    state.f[el.dataset.f][el.dataset.k] = el.value; render();
+  });
+
+  $("copy").addEventListener("click", () => {
+    const done = () => flash("Copied");
+    const fallback = () => {
+      const r = document.createRange(); r.selectNodeContents($("sql"));
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      flash("Selected. Press Ctrl/Cmd+C to copy.");
+    };
+    try { navigator.clipboard.writeText(lastSQL).then(done, fallback); } catch (err) { fallback(); }
+  });
+
+  // ---------- init ----------
+  const opts = Object.entries(TYPES).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join("");
+  $("inType").innerHTML = opts; $("outType").innerHTML = opts;
+  $("outType").value = state.outType;
+  renderFilters();
+  loadTable(parseCSV("uni_user_id,name\nUexample0001,Sample user 1\nUexample0002,Sample user 2\nUexample0003,Sample user 3\nUexample0002,Sample user 2 (duplicate)\nUexample0004,Sample user 4\n"), "example", true);
+})();
+</script>
+
+</body>
+</html>
