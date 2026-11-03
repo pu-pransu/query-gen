@@ -101,6 +101,15 @@ button:hover { filter: brightness(0.97); }
 .preview th { background: var(--surface-2); position: sticky; top: 0; font-weight: 500; }
 .preview td.sel, .preview th.sel { background: var(--accent-soft); }
 
+/* input sources */
+.sources { display: flex; flex-direction: column; gap: 10px; }
+.src { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.src-h { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.src-name { font-weight: 600; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.src-meta { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+button.link { border: 0; background: transparent; color: var(--neg); padding: 2px 4px; font-size: 12.5px; }
+.empty { border: 1px dashed var(--line); border-radius: var(--radius); padding: 14px; color: var(--muted); margin: 0; }
+
 /* filter cards */
 .filters { display: flex; flex-direction: column; gap: 10px; }
 .fcard { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
@@ -156,24 +165,21 @@ pre.sql .cm { color: var(--code-cm); }
       <section class="step" aria-labelledby="s1">
         <div class="step-h"><span class="step-n">STEP 1</span><h2 id="s1">Input IDs</h2></div>
         <div class="drop" id="drop">
-          <p>Drop a CSV here. Row 1 must be the header.</p>
-          <label class="file-btn" for="file"><span class="primary" style="display:inline-block;padding:7px 12px;border-radius:6px;background:var(--accent);color:var(--accent-fg);font-weight:500;">Choose CSV</span><input type="file" id="file" accept=".csv,.tsv,.txt,text/csv"></label>
+          <p>Drop one or more CSVs here. Row 1 of each must be the header. IDs from all files are combined into one list.</p>
+          <label class="file-btn" for="file"><span style="display:inline-block;padding:7px 12px;border-radius:6px;background:var(--accent);color:var(--accent-fg);font-weight:500;">Add CSV files</span><input type="file" id="file" multiple accept=".csv,.tsv,.txt,text/csv"></label>
         </div>
         <div id="srcline" class="stats"></div>
+        <div class="sources" id="sources"></div>
         <div class="row">
-          <div class="field">
-            <label class="lbl" for="colSel">Column with the IDs</label>
-            <select id="colSel"></select>
-          </div>
           <div class="field">
             <label class="lbl" for="inType">These IDs are</label>
             <select id="inType"></select>
+            <span class="note">All files must hold the same type of ID.</span>
           </div>
         </div>
-        <div class="preview" id="preview"></div>
         <div class="stats" id="idStats"></div>
         <details>
-          <summary class="lbl" style="cursor:pointer">Or paste IDs instead of a CSV</summary>
+          <summary class="lbl" style="cursor:pointer">Or paste IDs (added as another list)</summary>
           <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
             <textarea id="paste" placeholder="One ID per line, or separated by commas"></textarea>
             <div><button id="usePaste" type="button">Use pasted IDs</button></div>
@@ -302,7 +308,7 @@ pre.sql .cm { color: var(--code-cm); }
 
   // ---------- state ----------
   const state = {
-    rows: [], headers: [], col: 0, ids: [], raw: 0, blanks: 0, source: "",
+    sources: [], ids: [], raw: 0, blanks: 0,
     example: true,
     inType: "uni", outType: "uni",
     f: {}
@@ -347,48 +353,66 @@ pre.sql .cm { color: var(--code-cm); }
     return rows.filter(r => r.some(c => c.trim() !== ""));
   }
 
-  function loadTable(rows, source, example) {
-    if (!rows.length) { flash("That file has no rows."); return; }
-    state.headers = rows[0].map((h, i) => h.trim() || `column ${i + 1}`);
-    state.rows = rows.slice(1);
-    state.source = source; state.example = !!example;
-    // guess the ID column
-    const guess = state.headers.findIndex(h => /(user.?id|hash|uni|uw|mf|pu)/i.test(h));
-    state.col = guess >= 0 ? guess : 0;
-    // guess input type from header
-    const h = state.headers[state.col].toLowerCase();
-    if (/hash/.test(h)) state.inType = "hash";
-    else if (/mf/.test(h)) state.inType = "mf";
-    else if (/uw/.test(h)) state.inType = "uw";
-    else if (/uni|pu/.test(h)) state.inType = "uni";
-    extractIds(); renderInput(); render();
+  let srcSeq = 0;
+  function guessType(header) {
+    const h = header.toLowerCase();
+    if (/hash/.test(h)) return "hash";
+    if (/mf/.test(h)) return "mf";
+    if (/uw/.test(h)) return "uw";
+    if (/uni|pu/.test(h)) return "uni";
+    return null;
   }
 
-  function extractIds() {
-    const seen = new Set(); let blanks = 0;
-    state.rows.forEach(r => {
-      const v = (r[state.col] || "").trim().replace(/^'+|'+$/g, "");
-      if (!v) { blanks++; return; }
-      seen.add(v);
+  function addSource(rows, name, example) {
+    if (!rows.length) { flash(`${name} has no rows.`); return; }
+    if (state.example && !example) { state.sources = []; state.example = false; }
+    const headers = rows[0].map((h, i) => h.trim() || `column ${i + 1}`);
+    const guess = headers.findIndex(h => /(user.?id|hash|uni|uw|mf|pu)/i.test(h));
+    const src = { id: ++srcSeq, name, headers, rows: rows.slice(1), col: guess >= 0 ? guess : 0 };
+    state.sources.push(src);
+    if (state.sources.length === 1) { const t = guessType(headers[src.col]); if (t) state.inType = t; }
+    combine(); renderInput(); render();
+  }
+
+  function combine() {
+    const seen = new Set(); let blanks = 0, raw = 0;
+    state.sources.forEach(src => {
+      const own = new Set();
+      src.rows.forEach(r => {
+        raw++;
+        const v = (r[src.col] || "").trim().replace(/^'+|'+$/g, "");
+        if (!v) { blanks++; return; }
+        own.add(v); seen.add(v);
+      });
+      src.unique = own.size;
     });
-    state.ids = Array.from(seen); state.raw = state.rows.length; state.blanks = blanks;
+    state.ids = Array.from(seen); state.raw = raw; state.blanks = blanks;
   }
 
   // ---------- render input ----------
   function renderInput() {
-    const cs = $("colSel");
-    cs.innerHTML = state.headers.map((h, i) => `<option value="${i}"${i === state.col ? " selected" : ""}>${esc(h)}</option>`).join("");
     $("inType").value = state.inType;
+    const n = state.sources.length;
     $("srcline").innerHTML = state.example
-      ? `<span class="badge">Example data</span><span>Upload your CSV to replace these sample IDs.</span>`
-      : `<span>Loaded <b>${esc(state.source)}</b></span>`;
-    const head = state.headers.map((h, i) => `<th class="${i === state.col ? "sel" : ""}">${esc(h)}</th>`).join("");
-    const body = state.rows.slice(0, 6).map(r => "<tr>" + state.headers.map((_, i) => `<td class="${i === state.col ? "sel" : ""}">${esc(r[i] || "")}</td>`).join("") + "</tr>").join("");
-    $("preview").innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+      ? `<span class="badge">Example data</span><span>Add your CSVs to replace these sample IDs.</span>`
+      : (n ? `<span><b>${n}</b> file${n === 1 ? "" : "s"} combined</span>` : "");
+    $("sources").innerHTML = n ? state.sources.map(src => {
+      const opts = src.headers.map((h, i) => `<option value="${i}"${i === src.col ? " selected" : ""}>${esc(h)}</option>`).join("");
+      const head = src.headers.map((h, i) => `<th class="${i === src.col ? "sel" : ""}">${esc(h)}</th>`).join("");
+      const body = src.rows.slice(0, 4).map(r => "<tr>" + src.headers.map((_, i) => `<td class="${i === src.col ? "sel" : ""}">${esc(r[i] || "")}</td>`).join("") + "</tr>").join("");
+      return `<div class="src">
+        <div class="src-h"><span class="src-name">${esc(src.name)}</span>
+          <span class="src-meta">${src.rows.length.toLocaleString()} rows · ${src.unique.toLocaleString()} IDs</span>
+          <button type="button" class="link" data-remove="${src.id}" aria-label="Remove ${esc(src.name)}">Remove</button></div>
+        <div class="field"><label class="lbl" for="col_${src.id}">Column with the IDs</label>
+          <select id="col_${src.id}" data-src="${src.id}">${opts}</select></div>
+        <div class="preview"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
+      </div>`;
+    }).join("") : `<p class="empty">No files yet. Add one or more CSVs, or paste IDs below.</p>`;
     const dupes = state.raw - state.blanks - state.ids.length;
-    $("idStats").innerHTML = `<span><b>${state.raw.toLocaleString()}</b> rows</span><span><b>${state.ids.length.toLocaleString()}</b> unique IDs</span>` +
-      (dupes > 0 ? `<span>${dupes.toLocaleString()} duplicates removed</span>` : "") +
-      (state.blanks > 0 ? `<span>${state.blanks.toLocaleString()} blank cells skipped</span>` : "");
+    $("idStats").innerHTML = n ? `<span><b>${state.raw.toLocaleString()}</b> rows</span><span><b>${state.ids.length.toLocaleString()}</b> unique IDs in the final list</span>` +
+      (dupes > 0 ? `<span>${dupes.toLocaleString()} duplicates removed${n > 1 ? " (within and across files)" : ""}</span>` : "") +
+      (state.blanks > 0 ? `<span>${state.blanks.toLocaleString()} blank cells skipped</span>` : "") : "";
   }
 
   // ---------- render filters ----------
@@ -547,23 +571,33 @@ order by 1;`;
   function readFile(file) {
     if (!file) return;
     const r = new FileReader();
-    r.onload = () => loadTable(parseCSV(String(r.result)), file.name, false);
-    r.onerror = () => flash("Couldn't read that file.");
+    r.onload = () => addSource(parseCSV(String(r.result)), file.name, false);
+    r.onerror = () => flash(`Couldn't read ${file.name}.`);
     r.readAsText(file);
   }
-  $("file").addEventListener("change", e => { readFile(e.target.files[0]); e.target.value = ""; });
+  $("file").addEventListener("change", e => { Array.from(e.target.files).forEach(readFile); e.target.value = ""; });
   const drop = $("drop");
   ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
   ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
-  drop.addEventListener("drop", e => readFile(e.dataTransfer.files[0]));
+  drop.addEventListener("drop", e => Array.from(e.dataTransfer.files).forEach(readFile));
 
   $("usePaste").addEventListener("click", () => {
     const vals = $("paste").value.split(/[\s,;]+/).map(v => v.trim().replace(/^['"]+|['"]+$/g, "")).filter(Boolean);
     if (!vals.length) { flash("Paste at least one ID first."); return; }
-    loadTable([["pasted_ids"]].concat(vals.map(v => [v])), "pasted IDs", false);
+    addSource([["pasted_ids"]].concat(vals.map(v => [v])), "Pasted IDs", false);
+    $("paste").value = "";
   });
 
-  $("colSel").addEventListener("change", e => { state.col = +e.target.value; extractIds(); renderInput(); render(); });
+  $("sources").addEventListener("change", e => {
+    const id = +e.target.dataset.src; if (!id) return;
+    const src = state.sources.find(x => x.id === id); if (!src) return;
+    src.col = +e.target.value; combine(); renderInput(); render();
+  });
+  $("sources").addEventListener("click", e => {
+    const b = e.target.closest("button[data-remove]"); if (!b) return;
+    state.sources = state.sources.filter(x => x.id !== +b.dataset.remove);
+    combine(); renderInput(); render();
+  });
   $("inType").addEventListener("change", e => { state.inType = e.target.value; render(); });
   $("outType").addEventListener("change", e => { state.outType = e.target.value; render(); });
 
@@ -604,7 +638,7 @@ order by 1;`;
   $("inType").innerHTML = opts; $("outType").innerHTML = opts;
   $("outType").value = state.outType;
   renderFilters();
-  loadTable(parseCSV("uni_user_id,name\nUexample0001,Sample user 1\nUexample0002,Sample user 2\nUexample0003,Sample user 3\nUexample0002,Sample user 2 (duplicate)\nUexample0004,Sample user 4\n"), "example", true);
+  addSource(parseCSV("uni_user_id,name\nUexample0001,Sample user 1\nUexample0002,Sample user 2\nUexample0003,Sample user 3\nUexample0002,Sample user 2 (duplicate)\nUexample0004,Sample user 4\n"), "Example CSV", true);
 })();
 </script>
 
